@@ -4,6 +4,8 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const https = require("node:https");
+const zlib = require("node:zlib");
 const { sendNotify } = require("./notify");
 
 const LOGIN_PAGE =
@@ -39,6 +41,11 @@ function loadEnvFile() {
 
 function env(name, fallback = "") {
   return process.env[name] || fallback;
+}
+
+function isEnabled(value, defaultValue = false) {
+  if (value === undefined || value === "") return defaultValue;
+  return !["0", "false", "no", "off"].includes(String(value).toLowerCase());
 }
 
 function readAccounts() {
@@ -163,11 +170,93 @@ class Session {
       throw new Error(`接口返回不是 JSON: ${text.slice(0, 160)}`);
     }
   }
+
+  async legacyJson(url, options = {}) {
+    const text = await this.legacyRequest(url, options);
+    try {
+      return JSON.parse(text);
+    } catch (error) {
+      throw new Error(`接口返回不是 JSON: ${text.slice(0, 160)}`);
+    }
+  }
+
+  legacyRequest(url, options = {}) {
+    return new Promise((resolve, reject) => {
+      const target = new URL(url);
+      const headers = { ...(options.headers || {}) };
+      const cookie = this.cookieHeader();
+      if (cookie) headers.Cookie = cookie;
+
+      const request = https.request(
+        {
+          protocol: target.protocol,
+          hostname: target.hostname,
+          port: target.port || 443,
+          path: `${target.pathname}${target.search}`,
+          method: options.method || "GET",
+          headers,
+          timeout: options.timeout || 15000,
+        },
+        (response) => {
+          this.addSetCookies({
+            getSetCookie: () => response.headers["set-cookie"] || [],
+            get: (name) => response.headers[name.toLowerCase()],
+          });
+
+          const chunks = [];
+          response.on("data", (chunk) => chunks.push(chunk));
+          response.on("end", () => {
+            const buffer = Buffer.concat(chunks);
+            decodeBody(buffer, response.headers["content-encoding"])
+              .then((body) => {
+                if (response.statusCode < 200 || response.statusCode >= 300) {
+                  reject(new Error(`HTTP ${response.statusCode}: ${body}`));
+                  return;
+                }
+                resolve(body);
+              })
+              .catch(reject);
+          });
+        },
+      );
+
+      request.on("timeout", () => request.destroy(new Error("请求超时")));
+      request.on("error", reject);
+      if (options.body) request.write(options.body);
+      request.end();
+    });
+  }
 }
 
 function splitSetCookie(header) {
   if (!header) return [];
   return header.split(/,(?=\s*[^;,]+=)/g).map((item) => item.trim());
+}
+
+function decodeBody(buffer, encoding = "") {
+  const normalized = String(encoding).toLowerCase();
+  if (normalized.includes("gzip")) {
+    return new Promise((resolve, reject) =>
+      zlib.gunzip(buffer, (error, result) =>
+        error ? reject(error) : resolve(result.toString("utf8")),
+      ),
+    );
+  }
+  if (normalized.includes("deflate")) {
+    return new Promise((resolve, reject) =>
+      zlib.inflate(buffer, (error, result) =>
+        error ? reject(error) : resolve(result.toString("utf8")),
+      ),
+    );
+  }
+  if (normalized.includes("br")) {
+    return new Promise((resolve, reject) =>
+      zlib.brotliDecompress(buffer, (error, result) =>
+        error ? reject(error) : resolve(result.toString("utf8")),
+      ),
+    );
+  }
+  return Promise.resolve(buffer.toString("utf8"));
 }
 
 function int2char(value) {
@@ -278,9 +367,11 @@ async function signIn(session) {
   const headers = {
     "User-Agent": SIGN_USER_AGENT,
     Referer: "https://m.cloud.189.cn/zhuanti/2016/sign/index.jsp?albumBackupOpened=1",
+    Host: "m.cloud.189.cn",
+    "Accept-Encoding": "gzip, deflate",
   };
 
-  const result = await session.json(signUrl, { headers });
+  const result = await session.legacyJson(signUrl, { headers });
   const bonus = result.netdiskBonus ?? 0;
   if (result.isSign === "false") return `成功 +${bonus}M`;
   return `已签到 +${bonus}M`;
@@ -308,8 +399,12 @@ async function processAccount(account) {
   try {
     const session = await login(account.username, account.password);
     row.sign = await signIn(session);
-    await sleep(randomInt(2000, 5000));
-    row.lottery = await drawPrize(session);
+    if (isEnabled(env("ENABLE_LOTTERY"))) {
+      await sleep(randomInt(2000, 5000));
+      row.lottery = await drawPrize(session);
+    } else {
+      row.lottery = "未启用";
+    }
   } catch (error) {
     if (!row.sign) row.sign = "失败";
     row.lottery = error.message;
@@ -352,4 +447,3 @@ if (require.main === module) {
     process.exitCode = 1;
   });
 }
-
