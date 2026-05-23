@@ -414,17 +414,15 @@ async function processAccount(account) {
   return row;
 }
 
-function buildMarkdown(results) {
-  const rows = [
-    "### 天翼云盘签到汇总",
-    "",
-    "| 账号 | 签到结果 | 每日抽奖 |",
-    "|:-:|:-:|:-:|",
-  ];
+function buildPlainText(results) {
+  const rows = ["天翼云盘签到汇总"];
   for (const result of results) {
-    rows.push(`| ${result.username} | ${result.sign} | ${result.lottery} |`);
+    rows.push(`账号：${result.username}`);
+    rows.push(`签到结果：${result.sign}`);
+    rows.push(`每日抽奖：${result.lottery}`);
+    rows.push("");
   }
-  return rows.join("\n");
+  return rows.join("\n").trim();
 }
 
 async function main() {
@@ -436,7 +434,7 @@ async function main() {
     results.push(await processAccount(account));
   }
 
-  const message = buildMarkdown(results);
+  const message = buildPlainText(results);
   await sendNotify("天翼云盘自动签到", message);
   console.log("\n所有账号处理完成！");
 }
