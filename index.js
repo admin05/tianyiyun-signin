@@ -419,7 +419,9 @@ function buildPlainText(results) {
   for (const result of results) {
     rows.push(`账号：${result.username}`);
     rows.push(`签到结果：${result.sign}`);
-    rows.push(`每日抽奖：${result.lottery}`);
+    if (result.lottery && result.lottery !== "未启用") {
+      rows.push(`每日抽奖：${result.lottery}`);
+    }
     rows.push("");
   }
   return rows.join("\n").trim();
