@@ -8,8 +8,8 @@ const https = require("node:https");
 const zlib = require("node:zlib");
 const { sendNotify } = require("./notify");
 
-const LOGIN_PAGE =
-  "https://m.cloud.189.cn/udb/udb_login.jsp?pageId=1&pageKey=default&clientType=wap&redirectURL=https://m.cloud.189.cn/zhuanti/2021/shakeLottery/index.html";
+const LOGIN_REDIRECT_URL = "https://m.cloud.189.cn/zt/2024/grow-guide/index.html";
+const LOGIN_PAGE = `https://m.cloud.189.cn/udb/udb_login.jsp?pageId=1&pageKey=default&clientType=wap&redirectURL=${encodeURIComponent(LOGIN_REDIRECT_URL)}`;
 const LOGIN_SUBMIT = "https://open.e.189.cn/api/logbox/oauth2/loginSubmit.do";
 const SIGN_USER_AGENT =
   "Mozilla/5.0 (Linux; Android 5.1.1; SM-G930K Build/NRD90M; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/74.0.3729.136 Mobile Safari/537.36 Ecloud/8.6.3 Android/22 clientId/355325117317828 clientModel/SM-G930K imsi/460071114317824 clientChannelId/qq proVersion/1.0.6";
@@ -378,7 +378,13 @@ async function login(username, password) {
     throw new Error(result.msg || "登录失败");
   }
 
-  if (result.toUrl) await session.text(result.toUrl);
+  if (result.toUrl) {
+    try {
+      await session.text(result.toUrl);
+    } catch (error) {
+      console.warn(`登录回跳页访问失败，继续尝试签到：${error.message}`);
+    }
+  }
   console.log("登录成功");
   return session;
 }
